@@ -9,8 +9,11 @@ description = "Anonymous walk tool"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+anon-walk = "app:main"
+
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
+dev = ["pytest>=8.0.0", "ruff>=0.6.0", "mypy>=1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

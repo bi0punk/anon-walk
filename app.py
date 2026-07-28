@@ -89,7 +89,7 @@ def install_packages(packages: List[str]) -> None:
         elif pm == "pacman":
             run([pm, "-Sy", "--noconfirm"] + packages)
         logging.info("Instalación finalizada (o ya estaban instalados): %s", ", ".join(packages))
-    except Exception as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         logging.error("Error instalando paquetes: %s", e)
         raise
 
@@ -156,7 +156,7 @@ def change_mac_with_macchanger(interface: str, new_mac: Optional[str] = None) ->
                 mac = m.group(1)
                 logging.info("MAC cambiada a %s en %s (macchanger)", mac, interface)
                 return mac
-        except Exception as e:
+        except (subprocess.CalledProcessError, OSError) as e:
             logging.warning("macchanger falló: %s", e)
     # fallback ip link
     mac = new_mac or generate_random_mac()
@@ -166,7 +166,7 @@ def change_mac_with_macchanger(interface: str, new_mac: Optional[str] = None) ->
         run(["ip", "link", "set", "dev", interface, "up"])
         logging.info("MAC cambiada a %s en %s (ip link)", mac, interface)
         return mac
-    except Exception as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         logging.error("No se pudo cambiar la MAC con ip link: %s", e)
         raise
 
@@ -179,21 +179,21 @@ def restart_network(interface: str) -> None:
             run(["nmcli", "device", "connect", interface])
             logging.info("nmcli: reconectada la interfaz %s", interface)
             return
-        except Exception as e:
+        except (subprocess.CalledProcessError, OSError) as e:
             logging.warning("nmcli reconectar falló: %s", e)
     if shutil.which("systemctl"):
         try:
             run(["systemctl", "restart", "NetworkManager"])
             logging.info("NetworkManager reiniciado con systemctl")
             return
-        except Exception as e:
+        except (subprocess.CalledProcessError, OSError) as e:
             logging.warning("systemctl NetworkManager falló: %s", e)
     try:
         run(["ip", "link", "set", "dev", interface, "down"])
         time.sleep(1)
         run(["ip", "link", "set", "dev", interface, "up"])
         logging.info("Interfaz %s bajada/subida con ip link", interface)
-    except Exception as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         logging.error("No se pudo reiniciar la interfaz %s: %s", interface, e)
         raise
 
@@ -211,7 +211,7 @@ def renew_dhcp(interface: str) -> None:
             run(["nmcli", "device", "connect", interface])
             logging.info("DHCP: nmcli reapply/reconnect ejecutado.")
             return
-        except Exception as e:
+        except (subprocess.CalledProcessError, OSError) as e:
             logging.warning("nmcli reapply/reconnect falló: %s", e)
     # Intentar usar dhclient
     if shutil.which("dhclient"):
@@ -221,7 +221,7 @@ def renew_dhcp(interface: str) -> None:
             run(["dhclient", interface])
             logging.info("DHCP: dhclient renew ejecutado.")
             return
-        except Exception as e:
+        except (subprocess.CalledProcessError, OSError) as e:
             logging.warning("dhclient falló: %s", e)
     # Intentar dhcpcd si está instalado
     if shutil.which("dhcpcd"):
@@ -231,7 +231,7 @@ def renew_dhcp(interface: str) -> None:
             run(["dhcpcd", interface])
             logging.info("DHCP: dhcpcd renew ejecutado.")
             return
-        except Exception as e:
+        except (subprocess.CalledProcessError, OSError) as e:
             logging.warning("dhcpcd falló: %s", e)
     logging.warning("No se pudo renovar DHCP con los métodos intentados. Verifica configuración del sistema.")
 
@@ -240,13 +240,21 @@ def get_current_mac(interface: str) -> Optional[str]:
         cp = run(["cat", f"/sys/class/net/{interface}/address"], capture_output=True)
         mac = cp.stdout.strip()
         return mac
-    except Exception:
+    except (subprocess.CalledProcessError, OSError):
         return None
 
 # ---------------------------
 # Periodic task
 # ---------------------------
 stop_event = threading.Event()
+
+def _restart_and_renew(interface: str, renew_dhcp_flag: bool, label: str = "") -> None:
+    prefix = f"[{label}] " if label else ""
+    logging.info("%sReiniciando red + DHCP para %s", prefix, interface)
+    restart_network(interface)
+    if renew_dhcp_flag:
+        renew_dhcp(interface)
+
 
 def periodic_mac_change_loop(interface: str, interval_minutes: int, immediate: bool, renew_dhcp_flag: bool) -> None:
     interval = max(1, int(interval_minutes))
@@ -257,10 +265,8 @@ def periodic_mac_change_loop(interface: str, interval_minutes: int, immediate: b
             logging.info("MAC antes del primer cambio: %s", old)
             new_mac = change_mac_with_macchanger(interface)
             logging.info("MAC tras primer cambio: %s", new_mac)
-            restart_network(interface)
-            if renew_dhcp_flag:
-                renew_dhcp(interface)
-        except Exception as e:
+            _restart_and_renew(interface, renew_dhcp_flag, "inicio")
+        except (subprocess.CalledProcessError, OSError) as e:
             logging.error("Error en cambio inicial de MAC: %s", e)
     next_wait = interval * 60
     while not stop_event.wait(timeout=next_wait):
@@ -269,10 +275,8 @@ def periodic_mac_change_loop(interface: str, interval_minutes: int, immediate: b
             logging.info("Cambio periódico: MAC actual: %s", old)
             new_mac = change_mac_with_macchanger(interface)
             logging.info("MAC cambiada a %s", new_mac)
-            restart_network(interface)
-            if renew_dhcp_flag:
-                renew_dhcp(interface)
-        except Exception as e:
+            _restart_and_renew(interface, renew_dhcp_flag, "periódico")
+        except (subprocess.CalledProcessError, OSError) as e:
             logging.error("Error en cambio periódico de MAC: %s", e)
 
 # ---------------------------
@@ -303,7 +307,7 @@ def check_public_ip(use_proxy: bool = False) -> Optional[str]:
         ip = cp.stdout.strip()
         logging.info("IP pública (use_proxy=%s): %s", use_proxy, ip)
         return ip
-    except Exception:
+    except (subprocess.CalledProcessError, OSError):
         return None
 
 # ---------------------------
@@ -352,7 +356,7 @@ def main():
     if not args.no_install:
         try:
             install_packages(["proxychains4", "macchanger", "curl", "dhclient"])
-        except Exception as e:
+        except (subprocess.CalledProcessError, OSError) as e:
             logging.warning("No se pudo instalar paquetes automáticamente: %s", e)
 
     proxy_lines = parse_proxy_lines(args.proxies)
@@ -361,7 +365,7 @@ def main():
         sys.exit(1)
     try:
         configure_proxychains(proxy_lines, mode=args.mode, proxy_dns=args.proxy_dns)
-    except Exception as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         logging.error("Error configurando proxychains: %s", e)
 
     ip_before = check_public_ip(use_proxy=False)
