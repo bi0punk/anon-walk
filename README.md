@@ -1,68 +1,77 @@
 # anon-walk
 
-> Herramienta de mejora de anonimato que instala proxychains-ng y macchanger, configura proxychains y randomiza la dirección MAC de una interfaz de red periódicamente.
+Herramienta de mejora de anonimato en Linux: instala proxychains-ng y macchanger, configura proxychains y randomiza la dirección MAC de una interfaz de red periódicamente, con opción de renovación DHCP y verificación de IP pública.
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue)](https://python.org)
+[![CI](https://github.com/bi0punk/anon-walk/actions/workflows/ci.yml/badge.svg)](https://github.com/bi0punk/anon-walk/actions/workflows/ci.yml)
 
-## Tabla de Contenidos
+## Contenido
 
 - [Características](#características)
-- [Stack](#stack)
 - [Arquitectura](#arquitectura)
-- [Requisitos](#requisitos)
+- [Stack](#stack)
+- [Estructura del repositorio](#estructura-del-repositorio)
 - [Instalación](#instalación)
 - [Uso](#uso)
-- [Tests](#tests)
 - [Configuración](#configuración)
-- [CI](#ci)
-- [Limitaciones / Roadmap](#limitaciones--roadmap)
+- [Tests / CI](#tests--ci)
+- [Roadmap](#roadmap)
 - [Licencia](#licencia)
 
 ## Características
 
-- Instalación automática de proxychains-ng y macchanger (apt/dnf/pacman)
-- Configuración de `/etc/proxychains.conf` con backup automático
-- Cambio periódico de MAC (intervalo configurable) usando macchanger o `ip link`
-- Renovación de DHCP tras cada cambio de MAC (dhclient, dhcpcd, nmcli)
-- Verificación de IP pública antes/después con/sin proxy
-- Logging detallado con timestamps
-- Soporte para múltiples modos de proxychains (strict/dynamic/random)
-
-## Stack
-
-- **Python 3.11+** — argparse, threading, subprocess, logging
-- **bash** — paquetes del sistema (proxychains4, macchanger, curl, dhclient)
+- Instalación automática de proxychains-ng y macchanger (apt/dnf/pacman).
+- Configuración de `/etc/proxychains.conf` con backup automático.
+- Cambio periódico de MAC (intervalo configurable) usando macchanger o `ip link`.
+- Renovación de DHCP tras cada cambio de MAC (dhclient, dhcpcd, nmcli).
+- Verificación de IP pública antes/después con y sin proxy.
+- Logging detallado con timestamps.
+- Soporte de modos de proxychains (strict/dynamic/random) y `proxy_dns`.
 
 ## Arquitectura
 
+```mermaid
+flowchart TD
+  A[app.py main<br/>parse CLI args] --> B{es root?}
+  B -->|no| X[aborta]
+  B -->|sí| C[Detectar package manager<br/>apt / dnf / pacman]
+  C --> D[Instalar proxychains-ng,<br/>macchanger, curl, dhclient]
+  D --> E[Configurar /etc/proxychains.conf<br/>backup automático]
+  E --> F[Loop periódico MAC]
+  F --> G[Cambiar MAC<br/>macchanger / ip link]
+  G --> H[Renovar DHCP<br/>si --renew-dhcp]
+  H --> I[Verificar IP pública<br/>con/sin proxy]
+  I --> F
+```
+
+## Stack
+
+- **Python 3.11+** — argparse, threading, subprocess, logging (sin dependencias externas).
+- **bash / system packages** — proxychains4, macchanger, curl, dhclient.
+
+## Estructura del repositorio
+
 ```
 anon-walk/
+├── app.py               # Script principal (CLI)
+├── pyproject.toml       # Definición del paquete + entry point `anon-walk`
+├── tests/
+│   ├── test_app.py
+│   └── test_smoke.py
 ├── .env.example
 ├── .github/workflows/ci.yml
-├── .gitignore
-├── LICENSE
-├── README.md
-├── pyproject.toml
-├── requirements.txt
-├── app.py                   # Script principal
-└── tests/
-    └── test_smoke.py
+└── LICENSE
 ```
-
-## Requisitos
-
-- **Python 3.11+**
-- **Ejecución como root** (sudo)
-- Sistema Linux con `apt`, `dnf` o `pacman`
-- Interfaz de red inalámbrica o cableada
 
 ## Instalación
 
+Requisitos: Python 3.11+, ejecución como root (`sudo`), Linux con apt/dnf/pacman y una interfaz de red.
+
 ```bash
-git clone <repo-url>
+git clone https://github.com/bi0punk/anon-walk
 cd anon-walk
-# Sin dependencias Python externas (usa stdlib + system packages)
+pip install -e .          # opcional: instala el comando `anon-walk`
 ```
 
 ## Uso
@@ -75,21 +84,9 @@ sudo python app.py --interface wlan0 --interval 10 \
   --proxy-dns --renew-dhcp --immediate
 ```
 
-### Opciones
+Equivalente al instalarlo: `sudo anon-walk <mismos argumentos>`.
 
-| Argumento         | Default                     | Descripción                                  |
-| ----------------- | --------------------------- | -------------------------------------------- |
-| `--interface`     | *(requerido)*               | Interfaz de red (ej. wlan0, eth0)            |
-| `--interval`      | 10                          | Minutos entre cambios de MAC                 |
-| `--proxies`       | `socks5 127.0.0.1 9050`    | Proxies separados por coma                   |
-| `--mode`          | `strict_chain`              | Modo proxychains (strict/dynamic/random)     |
-| `--proxy-dns`     | off                         | Activar resolución DNS vía proxy             |
-| `--renew-dhcp`    | off                         | Renovar DHCP tras cada cambio de MAC         |
-| `--immediate`     | off                         | Cambiar MAC inmediatamente al iniciar        |
-| `--no-install`    | off                         | Saltar instalación automática de paquetes    |
-| `--logfile`       | `/var/log/proxychains_macchanger.log` | Ruta del archivo de log |
-
-### Ejemplo renovación DHCP
+### Ejemplo con renovación DHCP
 
 ```bash
 sudo python app.py --interface eth0 --interval 5 \
@@ -97,37 +94,43 @@ sudo python app.py --interface eth0 --interval 5 \
   --renew-dhcp --immediate
 ```
 
-## Tests
+## Configuración
+
+No requiere variables de entorno (`.env.example` vacío). Toda la configuración se pasa por argumentos CLI:
+
+| Argumento | Default | Descripción |
+|---|---|---|
+| `--interface` | *(requerido)* | Interfaz de red (ej. wlan0, eth0) |
+| `--interval` | `10` | Minutos entre cambios de MAC |
+| `--proxies` | `socks5 127.0.0.1 9050` | Proxies separados por coma |
+| `--mode` | `strict_chain` | Modo proxychains (strict/dynamic/random) |
+| `--proxy-dns` | off | Activar resolución DNS vía proxy |
+| `--renew-dhcp` | off | Renovar DHCP tras cada cambio de MAC |
+| `--immediate` | off | Cambiar MAC inmediatamente al iniciar |
+| `--no-install` | off | Saltar instalación automática de paquetes |
+| `--logfile` | `/var/log/proxychains_macchanger.log` | Ruta del archivo de log |
+
+La configuración de proxychains se escribe automáticamente en `/etc/proxychains.conf` con backup.
+
+## Tests / CI
 
 ```bash
 pip install pytest ruff
 pytest -q
 ```
 
-## Configuración
+CI: GitHub Actions (`.github/workflows/ci.yml`) — **lint** (`ruff check .`) y **test** (`pytest -q`).
 
-No requiere variables de entorno. Ver `.env.example`:
+## Roadmap
 
-```
-# Environment variables
-# Add your configuration here
-```
+- [x] Cambio periódico de MAC con y sin renovación DHCP
+- [x] Configuración automática de proxychains
+- [x] Verificación de IP pública
+- [ ] Soporte para Tailscale/WireGuard
+- [ ] Integración Tor
+- [ ] Notificaciones de escritorio
 
-Toda la configuración se pasa por argumentos CLI. La configuración de proxychains se escribe automáticamente en `/etc/proxychains.conf` con backup.
-
-## CI
-
-GitHub Actions — Push/PR:
-
-- `ruff check`
-- `pytest`
-
-## Limitaciones / Roadmap
-
-- Requiere ejecución root (sudo) para cambios de MAC y escritura en `/etc/`
-- No soporta Windows (Linux-only con ip link, macchanger, nmcli)
-- Depende de `macchanger`, `proxychains4`, `curl` y `dhclient` (instalación automática intenta con apt/dnf/pacman)
-- A futuro: soporte para Tailscale/WireGuard, integración Tor, notificaciones desktop
+Limitaciones: requiere root; solo Linux (macchanger, ip link, nmcli); depende de proxychains4, macchanger, curl y dhclient.
 
 ## Licencia
 
