@@ -20,6 +20,7 @@ Advertencias:
 """
 
 from __future__ import annotations
+
 import argparse
 import logging
 import os
@@ -30,8 +31,6 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
-from typing import List, Optional
 
 # ---------------------------
 # Logging
@@ -51,10 +50,13 @@ fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 console.setFormatter(fmt)
 logging.getLogger().addHandler(console)
 
+
 # ---------------------------
 # Utils
 # ---------------------------
-def run(cmd: List[str], check: bool = True, capture_output: bool = False, text: bool = True) -> subprocess.CompletedProcess:
+def run(
+    cmd: list[str], check: bool = True, capture_output: bool = False, text: bool = True
+) -> subprocess.CompletedProcess:
     logging.debug("Ejecutando: %s", " ".join(cmd))
     try:
         return subprocess.run(cmd, check=check, capture_output=capture_output, text=text)
@@ -62,22 +64,28 @@ def run(cmd: List[str], check: bool = True, capture_output: bool = False, text: 
         logging.error("Comando falló (%s): %s", " ".join(cmd), e)
         raise
 
+
 def is_root() -> bool:
     return os.geteuid() == 0
 
-def detect_package_manager() -> Optional[str]:
+
+def detect_package_manager() -> str | None:
     for p in ("apt-get", "apt", "dnf", "yum", "pacman"):
         if shutil.which(p):
             return p
     return None
 
+
 # ---------------------------
 # Install packages
 # ---------------------------
-def install_packages(packages: List[str]) -> None:
+def install_packages(packages: list[str]) -> None:
     pm = detect_package_manager()
     if pm is None:
-        logging.warning("No se detectó gestor de paquetes conocido. Instala manualmente: %s", ", ".join(packages))
+        logging.warning(
+            "No se detectó gestor de paquetes conocido. Instala manualmente: %s",
+            ", ".join(packages),
+        )
         return
     logging.info("Gestor de paquetes detectado: %s", pm)
     try:
@@ -93,11 +101,13 @@ def install_packages(packages: List[str]) -> None:
         logging.error("Error instalando paquetes: %s", e)
         raise
 
+
 # ---------------------------
 # Proxychains config
 # ---------------------------
 PROXYCHAINS_CONF = "/etc/proxychains.conf"
 BACKUP_SUFFIX = ".backup-by-script"
+
 
 def backup_file(path: str) -> str:
     dst = f"{path}{BACKUP_SUFFIX}.{int(time.time())}"
@@ -105,7 +115,10 @@ def backup_file(path: str) -> str:
     logging.info("Backup creado: %s", dst)
     return dst
 
-def configure_proxychains(proxy_lines: List[str], mode: str = "strict_chain", proxy_dns: bool = True) -> None:
+
+def configure_proxychains(
+    proxy_lines: list[str], mode: str = "strict_chain", proxy_dns: bool = True
+) -> None:
     if not os.path.exists(PROXYCHAINS_CONF):
         logging.warning("%s no existe. Creando archivo base.", PROXYCHAINS_CONF)
         with open(PROXYCHAINS_CONF, "w") as f:
@@ -113,7 +126,7 @@ def configure_proxychains(proxy_lines: List[str], mode: str = "strict_chain", pr
             f.write("strict_chain\nproxy_dns\n[ProxyList]\n")
     backup_file(PROXYCHAINS_CONF)
     logging.info("Configurando %s (mode=%s proxy_dns=%s)", PROXYCHAINS_CONF, mode, proxy_dns)
-    with open(PROXYCHAINS_CONF, "r", encoding="utf-8", errors="ignore") as f:
+    with open(PROXYCHAINS_CONF, encoding="utf-8", errors="ignore") as f:
         content = f.read()
     # Ajustar modo
     content = re.sub(r"(?m)^(strict_chain|dynamic_chain|random_chain).*$", mode, content)
@@ -135,18 +148,31 @@ def configure_proxychains(proxy_lines: List[str], mode: str = "strict_chain", pr
         f.write(content)
     logging.info("proxychains configurado. Revisa %s para ajustes adicionales.", PROXYCHAINS_CONF)
 
+
 # ---------------------------
 # MAC change & network restart
 # ---------------------------
 def generate_random_mac() -> str:
-    import random
-    mac = [0x02, random.randint(0x00, 0xff), random.randint(0x00, 0xff),
-           random.randint(0x00, 0xff), random.randint(0x00, 0xff), random.randint(0x00, 0xff)]
+    import secrets
+
+    mac = [
+        0x02,
+        secrets.randbelow(0x100),
+        secrets.randbelow(0x100),
+        secrets.randbelow(0x100),
+        secrets.randbelow(0x100),
+        secrets.randbelow(0x100),
+    ]
     return ":".join(f"{b:02x}" for b in mac)
 
-def change_mac_with_macchanger(interface: str, new_mac: Optional[str] = None) -> str:
+
+def change_mac_with_macchanger(interface: str, new_mac: str | None = None) -> str:
     if shutil.which("macchanger"):
-        cmd = ["macchanger", "-r", interface] if new_mac is None else ["macchanger", "-m", new_mac, interface]
+        cmd = (
+            ["macchanger", "-r", interface]
+            if new_mac is None
+            else ["macchanger", "-m", new_mac, interface]
+        )
         try:
             cp = run(cmd, capture_output=True)
             out = cp.stdout.strip() if cp.stdout else ""
@@ -169,6 +195,7 @@ def change_mac_with_macchanger(interface: str, new_mac: Optional[str] = None) ->
     except (subprocess.CalledProcessError, OSError) as e:
         logging.error("No se pudo cambiar la MAC con ip link: %s", e)
         raise
+
 
 def restart_network(interface: str) -> None:
     logging.info("Reiniciando conexión de red para la interfaz: %s", interface)
@@ -196,6 +223,7 @@ def restart_network(interface: str) -> None:
     except (subprocess.CalledProcessError, OSError) as e:
         logging.error("No se pudo reiniciar la interfaz %s: %s", interface, e)
         raise
+
 
 def renew_dhcp(interface: str) -> None:
     """Intenta renovar la concesión DHCP. Se intentan varios métodos y se ignoran fallos no críticos."""
@@ -233,9 +261,12 @@ def renew_dhcp(interface: str) -> None:
             return
         except (subprocess.CalledProcessError, OSError) as e:
             logging.warning("dhcpcd falló: %s", e)
-    logging.warning("No se pudo renovar DHCP con los métodos intentados. Verifica configuración del sistema.")
+    logging.warning(
+        "No se pudo renovar DHCP con los métodos intentados. Verifica configuración del sistema."
+    )
 
-def get_current_mac(interface: str) -> Optional[str]:
+
+def get_current_mac(interface: str) -> str | None:
     try:
         cp = run(["cat", f"/sys/class/net/{interface}/address"], capture_output=True)
         mac = cp.stdout.strip()
@@ -243,10 +274,12 @@ def get_current_mac(interface: str) -> Optional[str]:
     except (subprocess.CalledProcessError, OSError):
         return None
 
+
 # ---------------------------
 # Periodic task
 # ---------------------------
 stop_event = threading.Event()
+
 
 def _restart_and_renew(interface: str, renew_dhcp_flag: bool, label: str = "") -> None:
     prefix = f"[{label}] " if label else ""
@@ -256,9 +289,16 @@ def _restart_and_renew(interface: str, renew_dhcp_flag: bool, label: str = "") -
         renew_dhcp(interface)
 
 
-def periodic_mac_change_loop(interface: str, interval_minutes: int, immediate: bool, renew_dhcp_flag: bool) -> None:
+def periodic_mac_change_loop(
+    interface: str, interval_minutes: int, immediate: bool, renew_dhcp_flag: bool
+) -> None:
     interval = max(1, int(interval_minutes))
-    logging.info("Iniciando loop: cambio de MAC cada %d minutos en %s (renew_dhcp=%s)", interval, interface, renew_dhcp_flag)
+    logging.info(
+        "Iniciando loop: cambio de MAC cada %d minutos en %s (renew_dhcp=%s)",
+        interval,
+        interface,
+        renew_dhcp_flag,
+    )
     if immediate:
         try:
             old = get_current_mac(interface)
@@ -279,20 +319,23 @@ def periodic_mac_change_loop(interface: str, interval_minutes: int, immediate: b
         except (subprocess.CalledProcessError, OSError) as e:
             logging.error("Error en cambio periódico de MAC: %s", e)
 
+
 # ---------------------------
 # Signals
 # ---------------------------
-def signal_handler(sig, frame):
+def signal_handler(sig, _frame):
     logging.info("Señal recibida: %s - deteniendo...", sig)
     stop_event.set()
+
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
+
 # ---------------------------
 # Optional checks
 # ---------------------------
-def check_public_ip(use_proxy: bool = False) -> Optional[str]:
+def check_public_ip(use_proxy: bool = False) -> str | None:
     if not shutil.which("curl"):
         logging.debug("curl no disponible para check_public_ip")
         return None
@@ -310,10 +353,11 @@ def check_public_ip(use_proxy: bool = False) -> Optional[str]:
     except (subprocess.CalledProcessError, OSError):
         return None
 
+
 # ---------------------------
 # Helpers parse proxies
 # ---------------------------
-def parse_proxy_lines(raw: str) -> List[str]:
+def parse_proxy_lines(raw: str) -> list[str]:
     parts = [p.strip() for p in re.split(r"[,\n;]+", raw) if p.strip()]
     cleaned = []
     for p in parts:
@@ -324,21 +368,62 @@ def parse_proxy_lines(raw: str) -> List[str]:
             logging.warning("Proxy ignorado por formato inválido: %s", p)
     return cleaned
 
+
 # ---------------------------
 # Main
 # ---------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Configura proxychains y macchanger (cambio MAC periódico).")
+    parser = argparse.ArgumentParser(
+        description="Configura proxychains y macchanger (cambio MAC periódico)."
+    )
     parser.add_argument("--interface", required=True, help="Interfaz a modificar (ej. wlan0, eth0)")
-    parser.add_argument("--interval", type=int, default=10, help="Intervalo en minutos para cambiar MAC (default 10)")
-    parser.add_argument("--proxies", default="socks5 127.0.0.1 9050", help="Lista de proxies separadas por coma. Ej: 'socks5 127.0.0.1 9050, socks5 1.2.3.4 1080'")
-    parser.add_argument("--mode", choices=["strict_chain", "dynamic_chain", "random_chain"], default="strict_chain", help="Modo de proxychains")
-    parser.add_argument("--proxy-dns", dest="proxy_dns", action="store_true", help="Activar proxy_dns")
-    parser.add_argument("--no-install", dest="no_install", action="store_true", help="No instalar paquetes automáticamente")
-    parser.add_argument("--immediate", dest="immediate", action="store_true", help="Aplicar cambio de MAC inmediatamente al iniciar")
-    parser.add_argument("--renew-dhcp", dest="renew_dhcp", action="store_true", help="Renovar DHCP tras cada cambio de MAC")
-    parser.add_argument("--no-renew-dhcp", dest="renew_dhcp", action="store_false", help="No renovar DHCP (contrario).")
-    parser.add_argument("--logfile", default=DEFAULT_LOG_PATH, help=f"Ruta logfile (default {DEFAULT_LOG_PATH})")
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=10,
+        help="Intervalo en minutos para cambiar MAC (default 10)",
+    )
+    parser.add_argument(
+        "--proxies",
+        default="socks5 127.0.0.1 9050",
+        help="Lista de proxies separadas por coma. Ej: 'socks5 127.0.0.1 9050, socks5 1.2.3.4 1080'",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["strict_chain", "dynamic_chain", "random_chain"],
+        default="strict_chain",
+        help="Modo de proxychains",
+    )
+    parser.add_argument(
+        "--proxy-dns", dest="proxy_dns", action="store_true", help="Activar proxy_dns"
+    )
+    parser.add_argument(
+        "--no-install",
+        dest="no_install",
+        action="store_true",
+        help="No instalar paquetes automáticamente",
+    )
+    parser.add_argument(
+        "--immediate",
+        dest="immediate",
+        action="store_true",
+        help="Aplicar cambio de MAC inmediatamente al iniciar",
+    )
+    parser.add_argument(
+        "--renew-dhcp",
+        dest="renew_dhcp",
+        action="store_true",
+        help="Renovar DHCP tras cada cambio de MAC",
+    )
+    parser.add_argument(
+        "--no-renew-dhcp",
+        dest="renew_dhcp",
+        action="store_false",
+        help="No renovar DHCP (contrario).",
+    )
+    parser.add_argument(
+        "--logfile", default=DEFAULT_LOG_PATH, help=f"Ruta logfile (default {DEFAULT_LOG_PATH})"
+    )
     args = parser.parse_args()
 
     # configure logfile handler path if user provided
@@ -346,7 +431,12 @@ def main():
         if isinstance(h, logging.FileHandler):
             h.baseFilename = args.logfile
 
-    logging.info("Inicio - proxychains/macchanger - interface=%s interval=%d renew_dhcp=%s", args.interface, args.interval, args.renew_dhcp)
+    logging.info(
+        "Inicio - proxychains/macchanger - interface=%s interval=%d renew_dhcp=%s",
+        args.interface,
+        args.interval,
+        args.renew_dhcp,
+    )
 
     if not is_root():
         logging.error("Este script requiere ejecutarse como root. Salida.")
@@ -371,7 +461,11 @@ def main():
     ip_before = check_public_ip(use_proxy=False)
     ip_before_proxy = check_public_ip(use_proxy=True)
 
-    worker = threading.Thread(target=periodic_mac_change_loop, args=(args.interface, args.interval, args.immediate, args.renew_dhcp), daemon=True)
+    worker = threading.Thread(
+        target=periodic_mac_change_loop,
+        args=(args.interface, args.interval, args.immediate, args.renew_dhcp),
+        daemon=True,
+    )
     worker.start()
 
     logging.info("Presiona Ctrl+C para detener el script.")
@@ -385,7 +479,10 @@ def main():
     stop_event.set()
     worker.join(timeout=10)
     logging.info("Script terminado. Logs: %s", args.logfile)
-    logging.info("IP antes: %s (sin proxy) - IP con proxy (si config): %s", ip_before, ip_before_proxy)
+    logging.info(
+        "IP antes: %s (sin proxy) - IP con proxy (si config): %s", ip_before, ip_before_proxy
+    )
+
 
 if __name__ == "__main__":
     main()
